@@ -19,4 +19,19 @@ describe Karere do
     Karere::PacketType::Pingresp.value.should eq(13)
     Karere::PacketType::Disconnect.value.should eq(14)
   end
+
+  it "check connect packet" do
+    cp = Karere::Connect.new
+    cp.@fixed_header.packet_type.should eq(1)
+  end
+
+  it "check connack packet" do
+    cp = Karere::Connack.new
+    cp.@fixed_header.packet_type.should eq(2)
+  end
+
+  it "check publish packet" do
+    cp = Karere::Publish.new
+    cp.@fixed_header.packet_type.should eq(3)
+  end
 end
