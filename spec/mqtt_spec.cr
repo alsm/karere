@@ -23,6 +23,10 @@ describe Karere do
   it "check connect packet" do
     cp = Karere::Connect.new
     cp.@fixed_header.packet_type.should eq(1)
+    cp.@size.should eq(10)
+    io = MemoryIO.new
+    cp.to_io(io)
+    p io.to_slice.hexdump
   end
 
   it "check connack packet" do
