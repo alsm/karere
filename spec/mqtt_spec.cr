@@ -21,12 +21,18 @@ describe Karere do
   end
 
   it "check connect packet" do
-    cp = Karere::Connect.new
+    cp = Karere::Connect.new("test_client")
     cp.@fixed_header.packet_type.should eq(1)
     cp.@size.should eq(10)
     io = MemoryIO.new
     cp.to_io(io)
-    p io.to_slice.hexdump
+    puts io.to_slice.hexdump
+  end
+
+  it "check sending a connect packet" do
+    client = Karere::Client.new("127.0.0.1", 1883)
+    rc = client.connect
+    rc.should eq(1)
   end
 
   it "check connack packet" do

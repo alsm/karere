@@ -20,15 +20,15 @@ module Karere
     0 => "Connection Accepted",
     1 => "Connection Refused: unacceptable protocol version",
     2 => "Connection Refused: identifier rejected",
-    2 => "Connection Refused: server unavailable",
-    2 => "Connection Refused: bad username or password",
-    2 => "Connection Refused: not authorized",
+    3 => "Connection Refused: server unavailable",
+    4 => "Connection Refused: bad username or password",
+    5 => "Connection Refused: not authorized",
   }
 
-  Protocol_name = [0x00_u8, 0x04_u8, 0x4D_u8, 0x51_u8, 0x54_u8, 0x54_u8]
+  Protocol_name  = {0x00_u8, 0x04_u8, 0x4D_u8, 0x51_u8, 0x54_u8, 0x54_u8}
   Protocol_level = 4_u8
 
-  struct FixedHeader
+  class FixedHeader
     property packet_type : UInt8
     property quality_of_service : UInt8
     property duplicate : Bool
@@ -41,12 +41,26 @@ module Karere
       fh = @packet_type << 4
       fh = fh | (@quality_of_service << 1)
       if @duplicate
-        fh = fh | (1<<3)
+        fh = fh | (1 << 3)
       end
       if @retained
         fh = fh | 1
       end
-      return fh
+      fh
+    end
+
+    def self.from_io(io : IO, format : IO::ByteFormat = IO::ByteFormat::SystemEndian)
+      if fh = io.read_byte
+        @packet_type = fh >> 4
+        @quality_of_service = (fh & 0x02) >> 1
+        if (fh && 0x08)
+          @duplicate = true
+        end
+        if (fh && 0x01)
+          @retained = true
+        end
+      end
+      self
     end
   end
 
@@ -58,33 +72,69 @@ module Karere
       @fixed_header = FixedHeader.new(packet_type.value, qos, dup, retain)
     end
 
-    def remaining_length : Array(UInt8)
+    protected def write_remaining_length(io : IO)
       length = @size
-      encoded = Array(UInt8).new
       loop do
         digit = (length % 128).to_u8
         length /= 128
         if length > 0
           digit |= 0x80_u8
         end
-        encoded << digit
+        io.write_byte(digit)
         if length == 0
           break
         end
       end
-      return encoded
+    end
+
+    protected def read_remaining_length(io : IO)
+      remaining_length = 0_u32
+      multiplier = 0_u32
+      loop do
+        digit = io.read_byte
+        remaining_length |= (digit & 127) << multiplier
+        if (digit & 128) == 0
+          return remaining_length.to_i
+        end
+        multiplier += 7
+      end
+    end
+
+    def self.from_io(io : IO, format : IO::ByteFormat = IO::ByteFormat::SystemEndian)
+      fh = FixedHeader.new(0_u8, 0_u8, false, false)
+      fh = io.read_bytes(FixedHeader, IO::ByteFormat::NetworkEndian)
+      cp = case fh.packet_type
+           when PacketType::Connack
+             io.read_bytes(Connack, IO::ByteFormat::NetworkEndian)
+           end
+      cp.fixed_header = fh
     end
   end
 
   class Connect < ControlPacket
     @username : String
     @password : String
-    @clean_session : Bool = false
+    @clean_session : Bool = true
     @keep_alive : UInt16
+    @client_identifier : String
 
-    def initialize(@username : String = "", @password : String = "", @keep_alive : UInt16 = 30_u16)
+    def initialize(@client_identifier : String = "", @username : String = "", @password : String = "", @keep_alive : UInt16 = 30_u16)
       super(PacketType::Connect)
       @size = 10
+    end
+
+    protected def encode_flags : UInt8
+      flags = 0_u8
+      if !@username.empty?
+        flags |= 1 << 7
+      end
+      if !@password.empty?
+        flags |= 1 << 6
+      end
+      if @clean_session
+        flags |= 1 << 1
+      end
+      return flags
     end
 
     def to_io(io : IO, format : IO::ByteFormat = IO::ByteFormat::SystemEndian)
@@ -94,22 +144,42 @@ module Karere
       if !@password.empty?
         @size += @password.bytesize
       end
-      buffer = Array(UInt8).new(@size + 4)
-      buffer << @fixed_header.encode
-      self.remaining_length.each { |x| buffer << x }
-      Protocol_name.each { |x| buffer << x }
-      buffer << (@keep_alive >> 8).to_u8 
-      buffer << @keep_alive.to_u8 
-      io.write(Slice.new(buffer.to_unsafe, buffer.size))
+      if !@client_identifier.empty?
+        @size += @client_identifier.bytesize + 2
+      end
+      io.write_byte(@fixed_header.encode)
+      write_remaining_length(io)
+      Protocol_name.each { |x| io.write_byte(x) }
+      io.write_byte(Protocol_level)
+      io.write_byte(encode_flags)
+      io.write_byte((@keep_alive >> 8).to_u8)
+      io.write_byte(@keep_alive.to_u8)
+      if !@client_identifier.empty?
+        io.write_bytes(@client_identifier.bytesize.to_u16, IO::ByteFormat::NetworkEndian)
+        @client_identifier.each_byte { |x| io.write_byte(x) }
+      end
     end
   end
 
   class Connack < ControlPacket
-    def initialize
+    property rc : UInt8
+
+    def initialize(@rc : UInt8 = 0xFF_u8, @session_present : Bool = false)
       super(PacketType::Connack)
     end
 
     def to_io(io : IO, format : IO::ByteFormat = IO::ByteFormat::SystemEndian)
+    end
+
+    def from_io(io : IO, format : IO::ByteFormat = IO::ByteFormat::SystemEndian)
+      remaining_length = super.read_remaining_length
+      data = Slice(UInt8).new(remaining_length)
+      io.read_fully(data)
+      if data[0] & 0x01
+        @session_present = true
+      end
+      @rc = data[2]
+      self
     end
   end
 
