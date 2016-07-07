@@ -30,9 +30,10 @@ describe Karere do
   end
 
   it "check sending a connect packet" do
-    client = Karere::Client.new("127.0.0.1", 1883)
-    rc = client.connect
-    rc.should eq(1)
+    client = Karere::Client.new("iot.eclipse.org", 1883)
+    if rc = client.connect
+      rc.should eq(1)
+    end
   end
 
   it "check connack packet" do

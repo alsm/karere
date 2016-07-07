@@ -49,7 +49,7 @@ module Karere
       fh
     end
 
-    def self.from_io(io : IO, format : IO::ByteFormat = IO::ByteFormat::SystemEndian)
+    def read_header(io : IO, format : IO::ByteFormat = IO::ByteFormat::SystemEndian)
       if fh = io.read_byte
         @packet_type = fh >> 4
         @quality_of_service = (fh & 0x02) >> 1
@@ -65,7 +65,7 @@ module Karere
   end
 
   abstract class ControlPacket
-    @fixed_header : FixedHeader = FixedHeader.new(0_u8, 0_u8, false, false)
+    property fixed_header : FixedHeader = FixedHeader.new(0_u8, 0_u8, false, false)
     @size = 0
 
     def initialize(packet_type : PacketType, qos : UInt8 = 0_u8, dup : Bool = false, retain : Bool = false)
@@ -102,12 +102,12 @@ module Karere
 
     def self.from_io(io : IO, format : IO::ByteFormat = IO::ByteFormat::SystemEndian)
       fh = FixedHeader.new(0_u8, 0_u8, false, false)
-      fh = io.read_bytes(FixedHeader, IO::ByteFormat::NetworkEndian)
+      fh.read_header(io, IO::ByteFormat::NetworkEndian)
       cp = case fh.packet_type
            when PacketType::Connack
-             io.read_bytes(Connack, IO::ByteFormat::NetworkEndian)
+              io.read_bytes(Connack, IO::ByteFormat::NetworkEndian)
            end
-      cp.fixed_header = fh
+      cp
     end
   end
 

@@ -12,8 +12,9 @@ module Karere
       socket = TCPSocket.new(@host, @port)
       cp = Connect.new("test_crystal_client")
       socket.write_bytes(cp, IO::ByteFormat::NetworkEndian)
-      ca = socket.read_bytes(ControlPacket)
-      ca.rc
+      if ca = socket.read_bytes(ControlPacket)
+        return ca.rc
+      end
     end
   end
 end
