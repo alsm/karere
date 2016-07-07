@@ -29,10 +29,10 @@ module Karere
   Protocol_level = 4_u8
 
   class FixedHeader
-    property packet_type : UInt8
-    property quality_of_service : UInt8
-    property duplicate : Bool
-    property retained : Bool
+    property packet_type : UInt8 = 0_u8
+    property quality_of_service : UInt8 = 0_u8
+    property duplicate : Bool = false
+    property retained : Bool = false
 
     def initialize(@packet_type, @quality_of_service, @duplicate, @retained)
     end
@@ -49,7 +49,7 @@ module Karere
       fh
     end
 
-    def read_header(io : IO, format : IO::ByteFormat = IO::ByteFormat::SystemEndian)
+    def initialize(io : IO, @packet_type = 0_u8, @quality_of_service = 0_u8, @duplicate = false, @retained = false)
       if fh = io.read_byte
         @packet_type = fh >> 4
         @quality_of_service = (fh & 0x02) >> 1
@@ -60,12 +60,11 @@ module Karere
           @retained = true
         end
       end
-      self
     end
   end
 
   abstract class ControlPacket
-    property fixed_header : FixedHeader = FixedHeader.new(0_u8, 0_u8, false, false)
+    @fixed_header : FixedHeader = FixedHeader.new(0_u8, 0_u8, false, false)
     @size = 0
 
     def initialize(packet_type : PacketType, qos : UInt8 = 0_u8, dup : Bool = false, retain : Bool = false)
@@ -91,23 +90,24 @@ module Karere
       remaining_length = 0_u32
       multiplier = 0_u32
       loop do
-        digit = io.read_byte
-        remaining_length |= (digit & 127) << multiplier
-        if (digit & 128) == 0
-          return remaining_length.to_i
+        if digit = io.read_byte
+          remaining_length |= (digit & 127) << multiplier
+          if (digit & 128) == 0
+            return remaining_length.to_i
+          end
+          multiplier += 7
         end
-        multiplier += 7
       end
     end
 
-    def self.from_io(io : IO, format : IO::ByteFormat = IO::ByteFormat::SystemEndian)
-      fh = FixedHeader.new(0_u8, 0_u8, false, false)
-      fh.read_header(io, IO::ByteFormat::NetworkEndian)
-      cp = case fh.packet_type
+    def self.read_packet(io : IO)
+      fh = FixedHeader.new(io)
+      cp = case PacketType.new(fh.packet_type)
            when PacketType::Connack
-              io.read_bytes(Connack, IO::ByteFormat::NetworkEndian)
+             Connack.new(io, fh)
+           when PacketType::Publish
+             Publish.new(io, fh)
            end
-      cp
     end
   end
 
@@ -162,7 +162,8 @@ module Karere
   end
 
   class Connack < ControlPacket
-    property rc : UInt8
+    @session_present : Bool = false
+    property rc : UInt8 = 255_u8
 
     def initialize(@rc : UInt8 = 0xFF_u8, @session_present : Bool = false)
       super(PacketType::Connack)
@@ -171,21 +172,24 @@ module Karere
     def to_io(io : IO, format : IO::ByteFormat = IO::ByteFormat::SystemEndian)
     end
 
-    def from_io(io : IO, format : IO::ByteFormat = IO::ByteFormat::SystemEndian)
-      remaining_length = super.read_remaining_length
+    def initialize(io : IO, fh : FixedHeader, @session_present : Bool = false)
+      @fixed_header = fh
+      remaining_length = read_remaining_length(io)
       data = Slice(UInt8).new(remaining_length)
       io.read_fully(data)
       if data[0] & 0x01
         @session_present = true
       end
-      @rc = data[2]
-      self
+      @rc = data[1]
     end
   end
 
   class Publish < ControlPacket
     def initialize
       super(PacketType::Publish)
+    end
+
+    def initialize(io : IO, fh : FixedHeader)
     end
 
     def to_io(io : IO, format : IO::ByteFormat = IO::ByteFormat::SystemEndian)

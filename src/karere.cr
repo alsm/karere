@@ -12,8 +12,11 @@ module Karere
       socket = TCPSocket.new(@host, @port)
       cp = Connect.new("test_crystal_client")
       socket.write_bytes(cp, IO::ByteFormat::NetworkEndian)
-      if ca = socket.read_bytes(ControlPacket)
-        return ca.rc
+      ca = ControlPacket.read_packet(socket)
+      if ca.is_a?(Connack)
+        ca.rc
+      else
+        raise Exception.new("Error Connecting")
       end
     end
   end
